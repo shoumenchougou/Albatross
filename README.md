@@ -22,6 +22,8 @@ Code: https://github.com/Triang-jyed-driung/Albatross/tree/fp16
 
 10250+ token/s RWKV-7 7.2B fp16 bsz960 @ RTX5090
 
+9650+ token/s RWKV-7 7.2B fp16 bsz320 @ RTX5090
+
 123+ token/s RWKV-7 7.2B fp16 bsz1 @ RTX5090 with CUDAGraph and sparse FFN (lossless)
 
 Code: https://github.com/BlinkDL/Albatross/tree/main/faster_251101
