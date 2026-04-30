@@ -2,7 +2,11 @@
 
 efficient RWKV inference engine
 
-**Current fastest inference: enter faster2_251201 and run benchmark.py and demo2.py**
+---
+
+**Current fastest inference: enter faster2_251201 and run benchmark.py (fastest decode) and demo2.py (fastest batch decode)**
+
+---
 
 ## Old Readme
 
