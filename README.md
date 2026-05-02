@@ -4,7 +4,11 @@ efficient RWKV inference engine
 
 ---
 
-**Current fastest inference: enter faster2_251201 and run benchmark.py (fastest decode) and demo2.py (fastest batch decode)**
+**Current fastest inference: enter faster2_251201 and run benchmark.py (fastest decode) and demo3.py (fastest batch decode)**
+
+Note: demo3.py has efficient standalone Python GUI and you can simply run it on your GPU computer.
+
+While for demo2.py, you have to SSH to the GPU computer to run demo2.py in a SSH session, such that the GPU won't be affected by slow terminal rendering.
 
 ---
 
