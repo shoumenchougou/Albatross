@@ -81,6 +81,48 @@ def sampler_simple(logits: torch.Tensor, noise: float = 0.0, temp: float = 1.0):
             logits.add_(torch.empty_like(logits).uniform_(0.0, noise))
         return torch.argmax(logits, dim=-1, keepdim=False)
 
+@MyStatic
+def sampler_top_p_fast(
+    logits: torch.Tensor,
+    top_p: float = 0.5,
+    temp: float = 1.0,
+    top_k: int = 64,
+    token_presence: torch.Tensor | None = None,
+    presence_penalty: float = 0.0,
+):
+    assert temp > 0, "temperature must be positive"
+    with torch.no_grad():
+        vocab_size = logits.shape[-1]
+        top_k = min(max(1, int(top_k)), vocab_size)
+        top_p = float(top_p)
+        presence_penalty = float(presence_penalty)
+        if token_presence is not None and presence_penalty != 0.0:
+            work = logits - token_presence.to(dtype=logits.dtype).mul(presence_penalty)
+        else:
+            work = logits
+        if temp != 1.0:
+            work = work * (1.0 / temp)
+
+        topv, topi = torch.topk(work, k=top_k, dim=-1, sorted=True)
+        if top_p <= 0.0:
+            pick_token = topi[..., :1]
+            if token_presence is not None:
+                token_presence.scatter_(dim=-1, index=pick_token, value=True)
+            return pick_token
+
+        log_z = torch.logsumexp(work, dim=-1, keepdim=True)
+        top_probs = torch.exp(topv - log_z)
+        cdf = torch.cumsum(top_probs, dim=-1)
+        keep = (cdf - top_probs) < top_p
+        keep[..., 0] = True
+        masked = topv.masked_fill(~keep, float("-inf"))
+        gumbel = -torch.empty_like(masked).exponential_().log()
+        pick = torch.argmax(masked + gumbel, dim=-1, keepdim=True)
+        pick_token = topi.gather(-1, pick)
+        if token_presence is not None:
+            token_presence.scatter_(dim=-1, index=pick_token, value=True)
+        return pick_token
+
 class TRIE:
     __slots__ = tuple("ch,to,values,front".split(","))
     to:list
