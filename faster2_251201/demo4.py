@@ -79,7 +79,7 @@ def wrap_partial_html(fragment, caption="HTML is still streaming", show_caption=
     body {{ background: #f6f4ef; color: #202020; }}
     .pending {{ padding: 24px; border: 2px dashed #999; margin: 18px; border-radius: 12px; }}
     .pending h1 {{ margin: 0 0 8px; font-size: 22px; }}
-    .raw-output {{ margin: 0; padding: 18px 20px 28px; white-space: pre-wrap; overflow-wrap: anywhere; font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    .raw-output {{ margin: 0; padding: 18px 20px 28px; white-space: pre-wrap; overflow-wrap: anywhere; font: 24px/1.0 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
   </style>
 </head>
 <body>
@@ -483,20 +483,24 @@ def build_host_html(cols, rows, page_scale, allow_scripts, group_count, initial_
       if (!overlay || !text) return;
       text.value = currentPrompt;
       overlay.classList.add('open');
+      if (demo4Bridge) demo4Bridge.handlePromptEditor(true);
       setTimeout(function() {{ text.focus(); }}, 0);
     }}
-    function closePromptDialog() {{
+    function closePromptDialog(notify) {{
       const overlay = document.getElementById('promptOverlay');
       if (overlay) overlay.classList.remove('open');
+      if (notify !== false && demo4Bridge) demo4Bridge.handlePromptEditor(false);
     }}
     function applyPromptDialog() {{
       const text = document.getElementById('promptText');
       if (!text) return;
       const nextPrompt = text.value;
-      closePromptDialog();
       if (nextPrompt !== currentPrompt) {{
+        closePromptDialog(false);
         currentPrompt = nextPrompt;
         if (demo4Bridge) demo4Bridge.handlePrompt(nextPrompt);
+      }} else {{
+        closePromptDialog(true);
       }}
     }}
     window.setPrompt = function(prompt) {{
@@ -875,6 +879,30 @@ def model_process(out_q, ctrl_q, shutdown_event, cfg):
             perf_tokens = 0
             stop_requested = False
             restart_requested = False
+            paused = False
+
+            def handle_control_message(msg):
+                nonlocal baseline_out
+                nonlocal baseline_prompt
+                nonlocal baseline_state
+                nonlocal current_prompt
+                nonlocal paused
+                nonlocal restart_requested
+                nonlocal stop_requested
+                if msg == "stop":
+                    stop_requested = True
+                elif msg == "restart":
+                    restart_requested = True
+                elif msg == "pause":
+                    paused = True
+                elif msg == "resume":
+                    paused = False
+                elif isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "prompt":
+                    current_prompt = str(msg[1])
+                    baseline_prompt = None
+                    baseline_state = None
+                    baseline_out = None
+                    restart_requested = True
 
             step = 0
             while generation_length <= 0 or step < generation_length:
@@ -883,28 +911,33 @@ def model_process(out_q, ctrl_q, shutdown_event, cfg):
 
                 try:
                     while True:
-                        msg = ctrl_q.get_nowait()
-                        if msg == "stop":
-                            stop_requested = True
-                            break
-                        if msg == "restart":
-                            restart_requested = True
-                            break
-                        if isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "prompt":
-                            current_prompt = str(msg[1])
-                            baseline_prompt = None
-                            baseline_state = None
-                            baseline_out = None
-                            restart_requested = True
+                        handle_control_message(ctrl_q.get_nowait())
+                        if stop_requested or restart_requested:
                             break
                 except queue.Empty:
                     pass
                 if stop_requested:
-                    put_drop(out_q, ("status", f"Stopping model worker | dropped UI frames {dropped}"))
+                    put_drop(out_q, ("status", "Stopping model worker"))
                     break
                 if restart_requested:
-                    put_drop(out_q, ("status", f"Restarting generation | dropped UI frames {dropped}"))
+                    put_drop(out_q, ("status", "Restarting generation"))
                     break
+                if paused:
+                    put_drop(out_q, ("status", "Generation paused"))
+                    while paused and not stop_requested and not restart_requested and not shutdown_event.is_set():
+                        try:
+                            handle_control_message(ctrl_q.get(timeout=0.1))
+                        except queue.Empty:
+                            continue
+                    if stop_requested:
+                        put_drop(out_q, ("status", "Stopping model worker"))
+                        break
+                    if restart_requested:
+                        put_drop(out_q, ("status", "Restarting generation"))
+                        break
+                    if shutdown_event.is_set():
+                        break
+                    put_drop(out_q, ("status", "Generation resumed"))
 
                 new_tokens_tensor = sampler_top_p_fast(
                     out,
@@ -958,11 +991,11 @@ def model_process(out_q, ctrl_q, shutdown_event, cfg):
                         (
                             "status",
                             f"{TITLE_MODEL_NAME} {TITLE_PRECISION} bsz{page_count} @ {TITLE_GPU_NAME} | "
-                            f"Token/s {tps} | dropped UI frames {dropped}",
+                            f"Token/s {tps}",
                         ),
                     )
                 if all(finished_pages):
-                    put_drop(out_q, ("status", f"All {page_count} pages completed | dropped UI frames {dropped}"))
+                    put_drop(out_q, ("status", f"All {page_count} pages completed"))
                     break
                 step += 1
 
@@ -975,11 +1008,11 @@ def model_process(out_q, ctrl_q, shutdown_event, cfg):
             completed = sum(finished_pages)
             if completed == page_count:
                 send_finished_captions(out_q, raw_pages)
-                put_drop(out_q, ("status", f"Generation finished: all {page_count} pages completed | dropped UI frames {dropped}"))
+                put_drop(out_q, ("status", f"Generation finished: all {page_count} pages completed"))
             elif shutdown_event.is_set():
-                put_drop(out_q, ("status", f"Generation stopped: {completed}/{page_count} pages completed | dropped UI frames {dropped}"))
+                put_drop(out_q, ("status", f"Generation stopped: {completed}/{page_count} pages completed"))
             else:
-                put_drop(out_q, ("status", f"Token budget reached: {completed}/{page_count} pages completed | dropped UI frames {dropped}"))
+                put_drop(out_q, ("status", f"Token budget reached: {completed}/{page_count} pages completed"))
             if log_file is not None:
                 log_file.close()
                 log_file = None
@@ -1042,6 +1075,10 @@ def gui_process(in_q, ctrl_q, shutdown_event, cfg):
         @QtCore.Slot(str)
         def handlePrompt(self, prompt):
             QtCore.QTimer.singleShot(0, lambda prompt=prompt: self.owner.handle_prompt(prompt))
+
+        @QtCore.Slot(bool)
+        def handlePromptEditor(self, opened):
+            QtCore.QTimer.singleShot(0, lambda opened=opened: self.owner.handle_prompt_editor(opened))
 
     class HtmlGridView(QWebEngineView):
         def __init__(self):
@@ -1107,6 +1144,13 @@ def gui_process(in_q, ctrl_q, shutdown_event, cfg):
             self.render_timer = QtCore.QTimer(self)
             self.render_timer.timeout.connect(self.render_dirty)
             self.render_timer.start(max(1, int(1000 / max(1, cfg["render_hz"]))))
+
+            self.auto_group_timer = None
+            auto_group_seconds = float(cfg.get("auto_switch_group_seconds", 0.0) or 0.0)
+            if self.group_count > 1 and auto_group_seconds > 0.0:
+                self.auto_group_timer = QtCore.QTimer(self)
+                self.auto_group_timer.timeout.connect(self.auto_switch_group)
+                self.auto_group_timer.start(int(max(3.0, auto_group_seconds) * 1000))
 
         def set_status(self, text):
             self.pending_status = text or ""
@@ -1241,11 +1285,23 @@ def gui_process(in_q, ctrl_q, shutdown_event, cfg):
             except queue.Full:
                 self.set_status("Prompt update queue is full")
                 self.run_js("window.setPrompt(" + json.dumps(self.current_prompt, ensure_ascii=False) + ");")
+                try:
+                    ctrl_q.put_nowait("resume")
+                except queue.Full:
+                    pass
                 return
             self.current_prompt = prompt
             cfg["prompt"] = prompt
             self.ignore_until_clear_all = True
             self.reset_local_generation_state("Restarting generation with new prompt...")
+
+        def handle_prompt_editor(self, opened):
+            try:
+                ctrl_q.put_nowait("pause" if opened else "resume")
+            except queue.Full:
+                self.set_status("Prompt editor control queue is full")
+                return
+            self.set_status("Generation paused for prompt editing" if opened else "Generation resumed")
 
         def switch_group(self, group):
             group = max(0, min(self.group_count - 1, group))
@@ -1296,6 +1352,12 @@ def gui_process(in_q, ctrl_q, shutdown_event, cfg):
                     self.request_switch_group(int(action) - 1)
                 except ValueError:
                     pass
+
+        def auto_switch_group(self):
+            if self.group_count <= 1:
+                return
+            base_group = self.current_group if self.pending_group is None else self.pending_group
+            self.request_switch_group((base_group + 1) % self.group_count)
 
         def make_page_phases(self):
             if self.page_count <= 0:
@@ -1562,6 +1624,7 @@ def parse_args():
     parser.add_argument("--ui-poll-ms", type=int, default=20)
     parser.add_argument("--max-gui-messages", type=int, default=128)
     parser.add_argument("--group-render-delay-ms", type=int, default=0)
+    parser.add_argument("--auto-switch-group-seconds", type=float, default=0.0, help="auto switch to the next group every N seconds; 0 disables it, positive values are clamped to at least 3 seconds")
     parser.add_argument("--allow-scripts", action="store_true")
     parser.add_argument("--enable-webengine-gpu", dest="disable_webengine_gpu", action="store_false")
     parser.set_defaults(disable_webengine_gpu=True)
