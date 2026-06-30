@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument("--generation-length", type=int, default=0, help="max tokens per page; 0 means run until all pages complete HTML")
     parser.add_argument("--sampler-top-p", type=float, default=0.5)
     parser.add_argument("--sampler-temp", type=float, default=1.0)
-    parser.add_argument("--sampler-top-k", type=int, default=20)
+    parser.add_argument("--sampler-top-k", type=int, default=200)
     parser.add_argument("--presence-penalty", type=float, default=1.0)
     parser.add_argument("--perf-interval", type=int, default=30)
     parser.add_argument("--perf-sync-interval", type=int, default=30)
