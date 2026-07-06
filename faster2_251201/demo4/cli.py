@@ -29,7 +29,7 @@ def parse_args():
     parser.add_argument("--auto-bounce-scroll-step", type=int, default=24, help="pixels to move each auto bounce scroll tick")
     parser.add_argument("--auto-bounce-scroll-tick-ms", type=int, default=16, help="interval in milliseconds between auto bounce scroll ticks")
     parser.add_argument("--auto-bounce-scroll-edge-pause-ms", type=int, default=500, help="pause duration in milliseconds when auto bounce scroll reaches top or bottom")
-    parser.add_argument("--allow-scripts", action="store_true")
+    parser.add_argument("--allow-scripts", default=True, action=argparse.BooleanOptionalAction)
     parser.add_argument("--enable-webengine-gpu", dest="disable_webengine_gpu", action="store_false")
     parser.set_defaults(disable_webengine_gpu=True)
     parser.add_argument("--prompt", default=None)
